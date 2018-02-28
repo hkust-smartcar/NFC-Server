@@ -1,5 +1,5 @@
 var SerialPort = require('serialport');
-var port = new SerialPort('/dev/rfcomm0');
+var port = new SerialPort('/dev/rfcomm0',{ baudRate: 115200 });
 
 port.write('main screen turn on', function(err) {
   if (err) {
