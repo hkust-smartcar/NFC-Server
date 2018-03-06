@@ -5,7 +5,7 @@
 
 var SerialPort = require('serialport');
 var port = new SerialPort('/dev/rfcomm1',{ baudRate: 115200 });
-
+var { exec } = require('child_process');
 const ByteLength = SerialPort.parsers.ByteLength;
 const parser = port.pipe(new ByteLength({length: 1}));
 const acc = (accumulator, currentValue) => accumulator + currentValue;
@@ -17,11 +17,11 @@ var db = mysql.createConnection({
   database: "tuckshop"
 });
 
-console.log('Server starts.')
+console.log('Server starts.');
 
 port.on('error', function(err) {
   console.log('Error: ', err.message);
-})
+});
 
 var pkg_start = false;
 var len = -1;
@@ -45,7 +45,7 @@ parser.on('data', function (data) {
     /*console.info("Recieved package: ", `[${pkg.reduce(function(carry, item) {
       carry += item.toString(16) + ", ";
       return carry;
-    }, pkg[0].toString(16))}}]`);*/
+    }, "")}}]`);*/
     /*console.info("Recieved package: ", `[${()=>{
       var stringHexes = [];
       pkg.foreach(function(item) {
@@ -53,11 +53,11 @@ parser.on('data', function (data) {
       });
       return stringHexes;
     }.join(", ")}]`);*/
-    console.info("Recieved package: ", pkg.toString());
+    console.info("Recieved package: ", pkg);
     /* Handling Package */
 
     /* Check Validity */
-    if ((pkg.reduce(acc)-pkg[pkg.length-2]) != pkg[pkg.length-2]) {
+    if ((pkg.reduce(acc)-pkg[pkg.length-2])%256 != pkg[pkg.length-2]) {
       pkg_start = false;
       pkg = [];
       console.error("Incorrect PKG checksum.");
@@ -71,25 +71,26 @@ parser.on('data', function (data) {
 
       /* ACK */
       var ack = [0xAA, 6, 0x00, pkg[3], 0, 0xFF];
-      ack = [0xAA, 10, 0x03, id, stdout[0], stdout[1], stdout[2], stdout[3], 0, 0xFF];
-      ack[ret.length-2] = ret.reduce(acc) % 256;
-      port.write(ack.join(""), function(err) {
+
+      ack[ack.length-2] = ack.reduce(acc) % 256;
+      port.write(ack, function(err) {
         if (err) console.error('Error in ACK: ', err);
         console.info('Sent ACK:', ack);
       });
 
       var ret = [];
       /* Handles IP Request */
-      if (pkg[3] == 0x03) {
+      if (pkg[2] == 0x03) {
         exec('hostname -I', (error, stdout, stderr) => {
           if (error) {
             console.error(`IP exec error: ${error}`);
             return;
           }
-          stdout = stdout.split('.');
+          stdout = stdout.replace(/\n/g, "").split('.');
+          stdout.forEach((item, i, array) => {array[i] = parseInt(item)});
           ret = [0xAA, 10, 0x03, id, stdout[0], stdout[1], stdout[2], stdout[3], 0, 0xFF];
           ret[ret.length-2] = ret.reduce(acc) % 256;
-          port.write(ret.join(""), function(err) {
+          port.write(ret, function(err) {
             if (err) console.error('Error in RET: ', err);
             console.info('Sent RET:', ret);
           });
@@ -103,7 +104,7 @@ parser.on('data', function (data) {
     pkg_start = false;
     pkg = [];
   } else {
-    console.error('Incorrect Data.');
+    console.error('Incorrect Data: ', pkg);
     pkg_start = false;
     pkg = [];
   }
