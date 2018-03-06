@@ -3,7 +3,8 @@ Raspberry Pi server for smartcar NFC payment system
 
 ### hacky steps:
 1. Open blueman -> right click TEAM_FIVE -> connect to serial -> check if it is `dev/rfcomm<n>`
-2. change line 2 of `serial.js` -> `node serial.js`
+2. change `var port = new SerialPort('/dev/rfcomm<n>',{ baudRate: 115200 });` of `serial.js`, where <n> is obtained from step 1.
+  and then run `node serial.js`
 3. (if said Device or resource busy) `sudo cutecom` -> connect to `dev/rfcomm<n>` -> disconnect -> redo 2.
 
 
