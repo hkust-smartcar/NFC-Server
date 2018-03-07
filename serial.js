@@ -5,7 +5,7 @@
 
 var SerialPort = require('serialport');
 var port = new SerialPort('/dev/rfcomm1',{ baudRate: 115200 });
-var { exec } = require('child_process');
+var { execSync } = require('child_process');
 const ByteLength = SerialPort.parsers.ByteLength;
 const parser = port.pipe(new ByteLength({length: 1}));
 const acc = (accumulator, currentValue) => accumulator + currentValue;
@@ -28,8 +28,10 @@ var len = -1;
 var pkg = [];
 var nack = {};
 var id = 0;
+var log = [];
 // HEAD | SIZE | TYPE | DATA | TAIL
 parser.on('data', function (data) {
+  var local_id = id;
   var ch = data[0];
   if (!pkg_start && ch == 0xAA) {
     pkg_start = true;
@@ -42,31 +44,21 @@ parser.on('data', function (data) {
     pkg.push(ch);
   } else if (pkg_start && pkg.length == len-1 && ch == 0xFF) {
     pkg.push(ch);
-    /*console.info("Recieved package: ", `[${pkg.reduce(function(carry, item) {
-      carry += item.toString(16) + ", ";
-      return carry;
-    }, "")}}]`);*/
-    /*console.info("Recieved package: ", `[${()=>{
-      var stringHexes = [];
-      pkg.foreach(function(item) {
-        stringHexes.push(item.toString(16));
-      });
-      return stringHexes;
-    }.join(", ")}]`);*/
-    console.info("Recieved package: ", pkg);
+    /*console.info("Recieved package: ", `[${pkg.map(x => x.toString(16)).toString()}]`);*/
+    log.push("Recieved package: " + pkg);
     /* Handling Package */
 
     /* Check Validity */
     if ((pkg.reduce(acc)-pkg[pkg.length-2])%256 != pkg[pkg.length-2]) {
       pkg_start = false;
       pkg = [];
-      console.error("Incorrect PKG checksum.");
+      log.push("Incorrect PKG checksum.");
       return;
     }
 
     if (pkg[2] == 0x00) {
-      nack[pkg[3]] = undefined;
-      console.info("Cleared RET ID", pkg[3]);
+      delete nack[pkg[3]];
+      log.push("Cleared RET ID" + pkg[3]);
     } else if (pkg[2] <= 0x03) {
 
       /* ACK */
@@ -75,40 +67,79 @@ parser.on('data', function (data) {
       ack[ack.length-2] = ack.reduce(acc) % 256;
       port.write(ack, function(err) {
         if (err) console.error('Error in ACK: ', err);
-        console.info('Sent ACK:', ack);
+        log.push('Sent ACK:' + ack);
       });
 
-      var ret = [];
-      /* Handles IP Request */
-      if (pkg[2] == 0x03) {
-        exec('hostname -I', (error, stdout, stderr) => {
-          if (error) {
-            console.error(`IP exec error: ${error}`);
-            return;
+      if (pkg[2] == 0x01) {
+
+        db.query("SELECT name, price FROM products", function (err, result, fields) {
+          id = (id + result.length) % 256;
+          if (err) throw err;
+          var rets = [];
+          for (var i = 0; i < result.length; i++) {
+            var ret = [0xAA, 0, 0x01, (local_id + i) % 256, i];
+            var t = result[i].name.replace(/\n/g, "").split("");
+            t.forEach((e,i,a) => { a[i] = e.charCodeAt(0); });
+            ret = ret.concat(t);
+            var price = result[i].price;
+            ret.push(Math.floor(price/256));
+            ret.push(price%256);
+            ret.push(0,0xFF);
+            ret[1] = ret.length;
+            ret[ret.length-2] = (ret.reduce(acc)-ret[ret.length-2])%256;
+            rets.push(ret);
+
+            log.push('Pushed RET ' + ret + ' to NACK with ID ' + (local_id + i) % 256);
+            nack[(local_id + i) % 256] = ret;
+            // local_id = (local_id + 1) % 256;
           }
-          stdout = stdout.replace(/\n/g, "").split('.');
-          stdout.forEach((item, i, array) => {array[i] = parseInt(item)});
-          ret = [0xAA, 10, 0x03, id, stdout[0], stdout[1], stdout[2], stdout[3], 0, 0xFF];
-          ret[ret.length-2] = ret.reduce(acc) % 256;
-          port.write(ret, function(err) {
-            if (err) console.error('Error in RET: ', err);
-            console.info('Sent RET:', ret);
-          });
         });
       }
+      /* Handles IP Request */
+      else if (pkg[2] == 0x03) {
+        id = (id + 1) % 256;
+        var stdout = execSync('hostname -I');
+        var ret = [];
+        stdout = stdout.toString().replace(/\n/g, "").split('.');
+        stdout.forEach((item, i, array) => {array[i] = parseInt(item)});
+        ret = [0xAA, 10, 0x03, local_id, stdout[0], stdout[1], stdout[2], stdout[3], 0, 0xFF];
+        ret[ret.length-2] = ret.reduce(acc) % 256;
+        log.push('Pushed RET ' + ret + ' to NACK with ID ' + local_id);
+        nack[local_id] = ret;
 
-      nack[id] = ret;
-      id = (id + 1) % 256;
+      } else {
+        log.push('Incorrect Data: ' + pkg);
+        pkg_start = false;
+        pkg = [];
+        return;
+      }
+
     }
 
     pkg_start = false;
     pkg = [];
   } else {
-    console.error('Incorrect Data: ', pkg);
+    log.push('Incorrect Data: ' + pkg);
     pkg_start = false;
     pkg = [];
   }
 
 });
-// When you're done you can destroy all ports with
-// MockBinding.reset();
+
+function resend() {
+  for (var key in nack) {
+    port.write(nack[key], function(err) {
+      if (err) log.push('Error in resending NACK: ' + err);
+      log.push(`*Resent NACK ${key}:  ${nack[key]}`);
+    });
+  }
+}
+
+setInterval(resend, 500);
+
+function printLog() {
+  if (log.length > 0) log.forEach( (e) => { console.log(e); });
+  log = [];
+}
+
+setInterval(printLog, 1000);
