@@ -1,23 +1,22 @@
-// const SerialPort = require('serialport/test'); // when installed as a package
-// const MockBinding = SerialPort.Binding;
-// const portPath = '/dev/rfcomm1';
-// MockBinding.createPort(portPath, { echo: false, record: false });
-
-var SerialPort = require('serialport');
-var port = new SerialPort('/dev/rfcomm1',{ baudRate: 115200 });
-var { execSync } = require('child_process');
+const SerialPort = require('serialport');
+const port = new SerialPort('/dev/rfcomm1',{ baudRate: 115200 });
+const { execSync } = require('child_process');
 const ByteLength = SerialPort.parsers.ByteLength;
 const parser = port.pipe(new ByteLength({length: 1}));
 const acc = (accumulator, currentValue) => accumulator + currentValue;
-var mysql = require('mysql');
-
-var db = mysql.createConnection({
+const mysql = require('mysql');
+var total_prod_cnt = 0;
+const db = mysql.createConnection({
   host: "127.0.0.1",
   user: "root",
   database: "tuckshop"
 });
 
-console.log('Server starts.');
+db.query("SELECT COUNT(*) AS CNT FROM products", function (err, result, fields) {
+  total_prod_cnt = result[0].CNT;
+  console.log(`There are ${total_prod_cnt} products.`)
+  console.log('Server starts.');
+});
 
 port.on('error', function(err) {
   console.log('Error: ', err.message);
@@ -63,7 +62,6 @@ parser.on('data', function (data) {
 
       /* ACK */
       var ack = [0xAA, 6, 0x00, pkg[3], 0, 0xFF];
-
       ack[ack.length-2] = ack.reduce(acc) % 256;
       port.write(ack, function(err) {
         if (err) console.error('Error in ACK: ', err);
@@ -71,29 +69,58 @@ parser.on('data', function (data) {
       });
 
       if (pkg[2] == 0x01) {
-
+        id = (id + total_prod_cnt + 1) % 256;
         db.query("SELECT name, price FROM products", function (err, result, fields) {
-          id = (id + result.length) % 256;
           if (err) throw err;
-          var rets = [];
+          var first = [0xAA, 8, 0x01, local_id, 0, result.length, 0, 0xFF];
+          first[first.length-2] = (first.reduce(acc))%256;
+          nack[local_id++] = first;
           for (var i = 0; i < result.length; i++) {
-            var ret = [0xAA, 0, 0x01, (local_id + i) % 256, i];
+            var ret = [0xAA, 0, 0x01, (local_id + i) % 256, i+1];
             var t = result[i].name.replace(/\n/g, "").split("");
             t.forEach((e,i,a) => { a[i] = e.charCodeAt(0); });
             ret = ret.concat(t);
             var price = result[i].price;
-            ret.push(Math.floor(price/256));
-            ret.push(price%256);
+            ret.push(Math.floor(price%256));
+            ret.push(price/256);
             ret.push(0,0xFF);
             ret[1] = ret.length;
             ret[ret.length-2] = (ret.reduce(acc)-ret[ret.length-2])%256;
-            rets.push(ret);
 
             log.push('Pushed RET ' + ret + ' to NACK with ID ' + (local_id + i) % 256);
             nack[(local_id + i) % 256] = ret;
-            // local_id = (local_id + 1) % 256;
           }
         });
+      }
+      /* Handles Purchase Request */
+      else if (pkg[2] == 0x02) {
+        id = (id + 1) % 256;
+        var uid = pkg[4]+pkg[5]*256;
+        var bal = pkg[7] + pkg[8]*256;
+        var pid = pkg[6];
+        var chk = pkg[9] + pkg[10]*256 + pkg[11]*256*256 + pkg[12]*256*256*256;
+        var query = `INSERT INTO transactions (user_id, product_id, bal_change, checksum) VALUES (${uid}, ${pid}, ${bal}, ${chk});`;
+
+        db.query(query, function (err, result) {
+          if (err) throw err;
+          log.push("1 record inserted: " + query);
+          db.query("select max(traded_at) as time from transactions;", function(err, result) {
+            if (err) throw err;
+            var temp = (result[0].time);
+            var time = [];
+            for (var i = 0; i < 4; i++) {
+              time.push(temp%256);
+              temp = Math.floor(temp/256);
+            }
+            log.push('Time calculated: ' + time);
+            var ret = [0xAA, 10, 0x02, local_id, time[0], time[1], time[2], time[3], 0, 0xFF ];
+            ret[ret.length-2] = ret.reduce(acc) % 256;
+            log.push('Pushed RET ' + ret + ' to NACK with ID ' + local_id);
+            nack[local_id] = ret;
+          }
+        )});
+
+
       }
       /* Handles IP Request */
       else if (pkg[2] == 0x03) {

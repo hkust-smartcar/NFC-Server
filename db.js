@@ -37,6 +37,18 @@ db.query("SELECT created_at FROM users", function (err, result, fields) {
   console.log(result[0].created_at);
 });
 
+db.query("select max(traded_at) as time from transactions;", function(err, result) {
+  if (err) throw err;
+  var temp = result[0].time;
+  console.log('temp', temp);
+  var time = [];
+  for (var i = 0; i < 4; i++) {
+    time.push(temp%256);
+    temp = Math.floor(temp/256);
+  }
+  console.log('Time calculated: ' + time);
+});
+
 exec('hostname -I', (error, stdout, stderr) => {
   if (error) {
     console.error(`exec error: ${error}`);
