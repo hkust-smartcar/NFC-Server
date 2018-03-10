@@ -19,7 +19,7 @@ db.query("SELECT name, price FROM products", function (err, result, fields) {
     var t = result[i].name.replace(/\n/g, "").split("");
     t.forEach((e,i,a) => { a[i] = e.charCodeAt(0); });
     pkg = pkg.concat(t);
-    var price = result[i].price;
+    var price = parseInt(result[i].price);
     pkg.push(Math.floor(price/256));
     pkg.push(price%256);
     console.log('Price ', result[i].price);

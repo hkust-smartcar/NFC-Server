@@ -5,12 +5,16 @@ const ByteLength = SerialPort.parsers.ByteLength;
 const parser = port.pipe(new ByteLength({length: 1}));
 const acc = (accumulator, currentValue) => accumulator + currentValue;
 const mysql = require('mysql');
+const fs = require('file-system');
+const moment = require('moment');
 var total_prod_cnt = 0;
 const db = mysql.createConnection({
   host: "127.0.0.1",
   user: "root",
   database: "tuckshop"
 });
+
+const log_name = Date.now() + ".txt";
 
 db.query("SELECT COUNT(*) AS CNT FROM products", function (err, result, fields) {
   total_prod_cnt = result[0].CNT;
@@ -82,7 +86,7 @@ parser.on('data', function (data) {
             ret = ret.concat(t);
             var price = result[i].price;
             ret.push(Math.floor(price%256));
-            ret.push(price/256);
+            ret.push(Math.floor(price/256));
             ret.push(0,0xFF);
             ret[1] = ret.length;
             ret[ret.length-2] = (ret.reduce(acc)-ret[ret.length-2])%256;
@@ -157,7 +161,7 @@ function resend() {
   for (var key in nack) {
     port.write(nack[key], function(err) {
       if (err) log.push('Error in resending NACK: ' + err);
-      log.push(`*Resent NACK ${key}:  ${nack[key]}`);
+      log.push(`Resent NACK ${key}:  ${nack[key]}`);
     });
   }
 }
@@ -165,7 +169,10 @@ function resend() {
 setInterval(resend, 500);
 
 function printLog() {
-  if (log.length > 0) log.forEach( (e) => { console.log(e); });
+  if (log.length > 0) {log.forEach( (e) => {
+    console.log(e);
+    fs.appendFile(log_name, moment().format('YYYYMMDD hh:mm:ss.SSS ') + e+'\n', function(err) {})
+  })};
   log = [];
 }
 
