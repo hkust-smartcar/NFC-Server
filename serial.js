@@ -111,6 +111,8 @@ parser.on('data', function (data) {
           db.query("select max(traded_at) as time from transactions;", function(err, result) {
             if (err) throw err;
             var temp = (result[0].time);
+            temp = new Date(temp)
+            temp = temp.getTime()/1000
             var time = [];
             for (var i = 0; i < 4; i++) {
               time.push(temp%256);
